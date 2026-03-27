@@ -47,6 +47,7 @@ class VideoView(QGraphicsView):
         self._negative_marker_scene_positions: list[QPointF] = []
         self._roi_scene_rect: QRectF | None = None
         self._roi_preview_scene_rect: QRectF | None = None
+        self._roi_mode_enabled = False
         self.setFrameShape(QGraphicsView.Shape.NoFrame)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -94,11 +95,22 @@ class VideoView(QGraphicsView):
         self._roi_preview_scene_rect = rect
         self.viewport().update()
 
+    def set_roi_mode_enabled(self, enabled: bool) -> None:
+        self._roi_mode_enabled = enabled
+        self.viewport().update()
+
     def drawForeground(self, painter: QPainter, rect) -> None:  # type: ignore[no-untyped-def]
         super().drawForeground(painter, rect)
         painter.save()
         painter.resetTransform()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+
+        # Draw green border when ROI mode is active
+        if self._roi_mode_enabled:
+            viewport_rect = self.viewport().rect()
+            painter.setPen(QPen(QColor(0, 255, 0), 4))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRect(viewport_rect.adjusted(0, 0, -1, -1))
 
         if self._marker_scene_pos is not None:
             self._draw_marker(painter, self._marker_scene_pos, QColor(220, 20, 60))
@@ -332,6 +344,7 @@ class ClickableVideoWidget(QWidget):
         self._roi_mode_enabled = enabled
         self._roi_drag_start_scene = None
         self._view.set_roi_preview_scene_rect(None)
+        self._view.set_roi_mode_enabled(enabled)
 
     def is_roi_mode_enabled(self) -> bool:
         return self._roi_mode_enabled

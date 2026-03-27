@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from pathlib import Path
 
 from PySide6.QtCore import QSignalBlocker, Qt, QUrl
-from PySide6.QtGui import QColor, QKeySequence, QPainter, QPen, QShortcut
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtMultimedia import QAudioOutput, QMediaMetaData, QMediaPlayer
 from PySide6.QtWidgets import (
     QHBoxLayout,
@@ -14,124 +13,40 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
-    QSlider,
-    QStyle,
-    QStyleOptionSlider,
     QStatusBar,
     QVBoxLayout,
     QWidget,
 )
 
-from src.core.annotations import (
-    add_negative_marker,
-    set_crop_roi,
-    set_end,
-    set_marker,
-    set_start,
-)
-from src.core.video_discovery import list_videos
 from src.data.json_store import JsonStore
-from src.data.models import CropROI, Marker, VideoMetadata, VideoRecord
+from src.ui.annotation_controller import AnnotationController
+from src.ui.timeline_slider import TimelineSlider
+from src.ui.video_manager import VideoManager
+from src.ui.video_player_controller import VideoPlayerController
 from src.ui.video_widget import ClickableVideoWidget
 
 
-class TimelineSlider(QSlider):
-    START_COLOR = QColor(0, 190, 110)
-    END_COLOR = QColor(255, 140, 0)
-
-    def __init__(self, orientation: Qt.Orientation, parent: QWidget | None = None) -> None:
-        super().__init__(orientation, parent)
-        self._start_sec: float | None = None
-        self._end_sec: float | None = None
-
-    def set_annotation_markers(self, start_sec: float | None, end_sec: float | None) -> None:
-        self._start_sec = start_sec
-        self._end_sec = end_sec
-        self.update()
-
-    def paintEvent(self, event) -> None:  # type: ignore[no-untyped-def]
-        super().paintEvent(event)
-        if self.orientation() != Qt.Orientation.Horizontal:
-            return
-        if self.maximum() <= self.minimum():
-            return
-
-        option = QStyleOptionSlider()
-        self.initStyleOption(option)
-        groove = self.style().subControlRect(
-            QStyle.ComplexControl.CC_Slider,
-            option,
-            QStyle.SubControl.SC_SliderGroove,
-            self,
-        )
-        if groove.width() <= 1:
-            return
-
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-
-        span = max(1, self.maximum() - self.minimum())
-
-        def x_for_seconds(seconds: float) -> int:
-            ms = int(round(seconds * 1000.0))
-            clamped = min(max(ms, self.minimum()), self.maximum())
-            ratio = (clamped - self.minimum()) / span
-            return groove.left() + int(round(ratio * groove.width()))
-
-        self._draw_marker(painter, x_for_seconds, self._start_sec, self.START_COLOR, "S", groove)
-        self._draw_marker(painter, x_for_seconds, self._end_sec, self.END_COLOR, "E", groove)
-
-        painter.end()
-
-    def _draw_marker(
-        self,
-        painter: QPainter,
-        x_for_seconds,
-        seconds: float | None,
-        color: QColor,
-        label: str,
-        groove,
-    ) -> None:  # type: ignore[no-untyped-def]
-        if seconds is None:
-            return
-
-        x = x_for_seconds(seconds)
-        painter.setPen(QPen(color, 2))
-        painter.drawLine(x, groove.top() - 8, x, groove.bottom() + 8)
-
-        badge_size = 14
-        badge_x = x - (badge_size // 2)
-        badge_y = max(0, groove.top() - 24)
-        painter.setPen(QPen(QColor(255, 255, 255), 1))
-        painter.setBrush(color)
-        painter.drawEllipse(badge_x, badge_y, badge_size, badge_size)
-
-        painter.setPen(QPen(QColor(255, 255, 255), 1))
-        painter.drawText(badge_x, badge_y, badge_size, badge_size, Qt.AlignmentFlag.AlignCenter, label)
-
-
 class MainWindow(QMainWindow):
-    SEEK_STEP_MS = 5000
-
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("SVACC - Simple Video Annotator for Classes with Cropping")
         self.resize(1280, 760)
 
         self.project_root = Path(__file__).resolve().parents[2]
-        self.videos_dir = self.project_root / "videos"
         self.data_dir = self.project_root / "data"
 
         self.store = JsonStore(self.data_dir)
+        self.video_manager = VideoManager(self.store, self.project_root)
+        self.annotation_controller = AnnotationController(self)
 
         self.current_video: Path | None = None
-        self.current_record: VideoRecord | None = None
-        self._is_user_scrubbing = False
+        self.current_record = None
 
         self.player = QMediaPlayer(self)
         self.audio_output = QAudioOutput(self)
         self.player.setAudioOutput(self.audio_output)
         self.audio_output.setMuted(True)
+        self.player_controller = VideoPlayerController(self.player)
 
         self.video_widget = ClickableVideoWidget(self)
         self.player.setVideoOutput(self.video_widget.video_output())
@@ -148,19 +63,19 @@ class MainWindow(QMainWindow):
         self.reset_selected_button = QPushButton("Reset selected video data", self)
         self.reset_selected_button.clicked.connect(self._reset_selected_video_data)
 
-        self.play_pause_button = QPushButton("Play", self)
+        self.play_pause_button = QPushButton("Play (Space)", self)
         self.play_pause_button.clicked.connect(self._toggle_play_pause)
 
         self.mute_button = QPushButton("Unmute", self)
         self.mute_button.clicked.connect(self._toggle_mute)
 
-        self.start_button = QPushButton("Set START", self)
+        self.start_button = QPushButton("Set START (S)", self)
         self.start_button.clicked.connect(self._set_start)
 
-        self.end_button = QPushButton("Set END", self)
+        self.end_button = QPushButton("Set END (E)", self)
         self.end_button.clicked.connect(self._set_end)
 
-        self.roi_mode_button = QPushButton("ROI Mode: Off", self)
+        self.roi_mode_button = QPushButton("ROI Mode: Off (R)", self)
         self.roi_mode_button.clicked.connect(self._toggle_roi_mode)
 
         self.seek_slider = TimelineSlider(Qt.Orientation.Horizontal, self)
@@ -233,8 +148,8 @@ class MainWindow(QMainWindow):
 
     def _setup_shortcuts(self) -> None:
         self._register_shortcut(QKeySequence(Qt.Key.Key_Space), self._toggle_play_pause)
-        self._register_shortcut(QKeySequence(Qt.Key.Key_Right), self._seek_forward)
-        self._register_shortcut(QKeySequence(Qt.Key.Key_Left), self._seek_backward)
+        self._register_shortcut(QKeySequence(Qt.Key.Key_Right), self.player_controller.seek_forward)
+        self._register_shortcut(QKeySequence(Qt.Key.Key_Left), self.player_controller.seek_backward)
         self._register_shortcut(QKeySequence(Qt.Key.Key_S), self._set_start)
         self._register_shortcut(QKeySequence(Qt.Key.Key_E), self._set_end)
         self._register_shortcut(QKeySequence(Qt.Key.Key_R), self._toggle_roi_mode)
@@ -256,13 +171,7 @@ class MainWindow(QMainWindow):
         if confirm != QMessageBox.StandardButton.Yes:
             return
 
-        deleted_count = 0
-        for json_file in self.data_dir.glob("*.json"):
-            try:
-                json_file.unlink()
-                deleted_count += 1
-            except OSError:
-                continue
+        deleted_count = self.video_manager.delete_all_annotations()
 
         self.current_record = None
         self.video_widget.clear_marker()
@@ -290,10 +199,10 @@ class MainWindow(QMainWindow):
         if confirm != QMessageBox.StandardButton.Yes:
             return
 
-        metadata = self._build_file_metadata(self.current_video)
-        deleted = self.store.delete_for_video(metadata.relative_path)
+        metadata = self.video_manager.get_video_metadata(self.current_video)
+        deleted = self.video_manager.delete_video_annotations(metadata.relative_path)
 
-        self.current_record = self.store.load_or_create(metadata)
+        self.current_record = self.video_manager.load_or_create_record(self.current_video)
         self._refresh_annotation_labels()
         self._refresh_video_list_item_status(self.current_video)
 
@@ -309,10 +218,11 @@ class MainWindow(QMainWindow):
             selected_video_path = str(current_item.data(Qt.ItemDataRole.UserRole))
 
         self.video_list.clear()
-        videos = list_videos(self.videos_dir)
+        videos = self.video_manager.list_videos()
 
         for video in videos:
-            is_complete = self._video_has_complete_annotations(video)
+            record = self.video_manager.load_or_create_record(video)
+            is_complete = self.video_manager.record_is_complete(record)
             item = QListWidgetItem(self._video_list_display_name(video.name, is_complete))
             item.setData(Qt.ItemDataRole.UserRole, str(video))
             self.video_list.addItem(item)
@@ -340,23 +250,8 @@ class MainWindow(QMainWindow):
             return f"✓ {file_name}"
         return file_name
 
-    @staticmethod
-    def _record_is_complete(record: VideoRecord | None) -> bool:
-        if record is None:
-            return False
-        return (
-            record.annotations.start_sec is not None
-            and record.annotations.end_sec is not None
-            and record.annotations.marker is not None
-        )
-
-    def _video_has_complete_annotations(self, video_path: Path) -> bool:
-        metadata = self._build_file_metadata(video_path)
-        record = self.store.load_or_create(metadata)
-        return self._record_is_complete(record)
-
     def _refresh_video_list_item_status(self, video_path: Path) -> None:
-        is_complete = self._record_is_complete(self.current_record)
+        is_complete = self.video_manager.record_is_complete(self.current_record)
         for index in range(self.video_list.count()):
             item = self.video_list.item(index)
             item_video_path = Path(str(item.data(Qt.ItemDataRole.UserRole)))
@@ -376,8 +271,7 @@ class MainWindow(QMainWindow):
             return
 
         self.current_video = video_path
-        metadata = self._build_file_metadata(video_path)
-        self.current_record = self.store.load_or_create(metadata)
+        self.current_record = self.video_manager.load_or_create_record(video_path)
 
         self.player.setSource(QUrl.fromLocalFile(str(video_path)))
         self.player.pause()
@@ -386,62 +280,30 @@ class MainWindow(QMainWindow):
         self._refresh_video_list_item_status(video_path)
         self.status.showMessage(f"Loaded {video_path.name}")
 
-    def _build_file_metadata(self, video_path: Path) -> VideoMetadata:
-        stat = video_path.stat()
-        relative_path = str(video_path.relative_to(self.project_root)).replace("\\", "/")
-
-        modified = datetime.fromtimestamp(stat.st_mtime, timezone.utc).replace(microsecond=0)
-        return VideoMetadata(
-            file_name=video_path.name,
-            relative_path=relative_path,
-            file_size_bytes=stat.st_size,
-            modified_time_utc=modified.isoformat(),
-        )
-
     def _on_player_error(self, error, error_string: str) -> None:  # type: ignore[no-untyped-def]
         if error == QMediaPlayer.Error.NoError:
             return
         self.status.showMessage(f"Player error: {error_string}")
 
     def _toggle_play_pause(self) -> None:
-        if self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
-            self.player.pause()
-        else:
-            self.player.play()
-
-    def _seek_forward(self) -> None:
-        self._seek_relative(self.SEEK_STEP_MS)
-
-    def _seek_backward(self) -> None:
-        self._seek_relative(-self.SEEK_STEP_MS)
-
-    def _seek_relative(self, delta_ms: int) -> None:
-        duration = max(self.player.duration(), 0)
-        if duration <= 0:
-            return
-
-        next_position = self.player.position() + delta_ms
-        next_position = max(0, min(duration, next_position))
-        self.player.setPosition(next_position)
+        self.player_controller.toggle_play_pause()
 
     def _toggle_mute(self) -> None:
-        is_muted = self.audio_output.isMuted()
-        self.audio_output.setMuted(not is_muted)
+        old_muted = self.audio_output.isMuted()
+        self.player_controller.toggle_mute(self.audio_output)
         self._update_mute_button_text()
-
-        if self.audio_output.isMuted():
-            self.status.showMessage("Audio muted")
-        else:
-            self.status.showMessage("Audio unmuted")
+        self.status.showMessage("Audio muted" if not old_muted else "Audio unmuted")
 
     def _toggle_roi_mode(self) -> None:
         enabled = not self.video_widget.is_roi_mode_enabled()
         self.video_widget.set_roi_mode_enabled(enabled)
         if enabled:
-            self.roi_mode_button.setText("ROI Mode: On")
+            self.roi_mode_button.setText("ROI Mode: On (R)")
+            self.roi_mode_button.setStyleSheet("background-color: #00ff00; font-weight: bold;")
             self.status.showMessage("ROI mode enabled. Click and drag to draw rectangle.")
         else:
-            self.roi_mode_button.setText("ROI Mode: Off")
+            self.roi_mode_button.setText("ROI Mode: Off (R)")
+            self.roi_mode_button.setStyleSheet("")
             self.status.showMessage("ROI mode disabled")
 
     def _update_mute_button_text(self) -> None:
@@ -452,9 +314,9 @@ class MainWindow(QMainWindow):
 
     def _on_playback_state_changed(self, state: QMediaPlayer.PlaybackState) -> None:
         if state == QMediaPlayer.PlaybackState.PlayingState:
-            self.play_pause_button.setText("Pause")
+            self.play_pause_button.setText("Pause (Space)")
         else:
-            self.play_pause_button.setText("Play")
+            self.play_pause_button.setText("Play (Space)")
 
     def _on_duration_changed(self, duration_ms: int) -> None:
         self.seek_slider.setRange(0, max(duration_ms, 0))
@@ -466,7 +328,7 @@ class MainWindow(QMainWindow):
             self._save_current_record()
 
     def _on_position_changed(self, position_ms: int) -> None:
-        if not self._is_user_scrubbing:
+        if not self.player_controller.is_user_scrubbing:
             with QSignalBlocker(self.seek_slider):
                 self.seek_slider.setValue(position_ms)
 
@@ -476,80 +338,37 @@ class MainWindow(QMainWindow):
             self.current_record.annotations.last_position_ms = position_ms
 
     def _on_slider_pressed(self) -> None:
-        self._is_user_scrubbing = True
+        self.player_controller.is_user_scrubbing = True
 
     def _on_slider_released(self) -> None:
-        self._is_user_scrubbing = False
+        self.player_controller.is_user_scrubbing = False
         self.player.setPosition(self.seek_slider.value())
 
     def _on_slider_moved(self, position_ms: int) -> None:
         self._update_time_label(position_ms, self.player.duration())
 
     def _set_start(self) -> None:
-        if self.current_record is None:
-            return
-
-        proposed_start_sec = round(self.player.position() / 1000.0, 3)
-        end_sec = self.current_record.annotations.end_sec
-        if end_sec is not None and proposed_start_sec > end_sec:
-            QMessageBox.warning(
-                self,
-                "Invalid START",
-                "START cannot be after END.",
-            )
-            self.status.showMessage("START not saved: cannot be after END")
-            return
-
-        set_start(self.current_record, proposed_start_sec)
+        success, message = self.annotation_controller.set_start(self.current_record, self.player.position())
+        if not success:
+            QMessageBox.warning(self, "Invalid START", message.replace(" not saved:", ""))
         self._refresh_annotation_labels()
         self._save_current_record()
         if self.current_video is not None:
             self._refresh_video_list_item_status(self.current_video)
-        self.status.showMessage("Saved START timestamp")
+        self.status.showMessage(message)
 
     def _set_end(self) -> None:
-        if self.current_record is None:
-            return
-
-        start_sec = self.current_record.annotations.start_sec
-        if start_sec is None:
-            QMessageBox.warning(
-                self,
-                "Set START first",
-                "END cannot be set before START. Please set START first.",
-            )
-            self.status.showMessage("END not saved: set START first")
-            return
-
-        proposed_end_sec = round(self.player.position() / 1000.0, 3)
-        if proposed_end_sec < start_sec:
-            QMessageBox.warning(
-                self,
-                "Invalid END",
-                "END cannot be before START.",
-            )
-            self.status.showMessage("END not saved: cannot be before START")
-            return
-
-        set_end(self.current_record, proposed_end_sec)
+        success, message = self.annotation_controller.set_end(self.current_record, self.player.position())
+        if not success:
+            QMessageBox.warning(self, "Invalid END", message.replace(" not saved:", ""))
         self._refresh_annotation_labels()
         self._save_current_record()
         if self.current_video is not None:
             self._refresh_video_list_item_status(self.current_video)
-        self.status.showMessage("Saved END timestamp")
+        self.status.showMessage(message)
 
     def _on_marker_placed(self, x_px: float, y_px: float, x_norm: float, y_norm: float) -> None:
-        if self.current_record is None:
-            return
-
-        marker = Marker(
-            x_px=int(round(x_px)),
-            y_px=int(round(y_px)),
-            x_norm=round(x_norm, 6),
-            y_norm=round(y_norm, 6),
-            captured_at_utc=datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
-        )
-        set_marker(self.current_record, marker)
+        self.annotation_controller.add_marker(self.current_record, x_px, y_px, x_norm, y_norm)
         self._refresh_annotation_labels()
         self._save_current_record()
         if self.current_video is not None:
@@ -557,17 +376,7 @@ class MainWindow(QMainWindow):
         self.status.showMessage("Saved marker coordinates")
 
     def _on_negative_marker_placed(self, x_px: float, y_px: float, x_norm: float, y_norm: float) -> None:
-        if self.current_record is None:
-            return
-
-        marker = Marker(
-            x_px=int(round(x_px)),
-            y_px=int(round(y_px)),
-            x_norm=round(x_norm, 6),
-            y_norm=round(y_norm, 6),
-            captured_at_utc=datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
-        )
-        add_negative_marker(self.current_record, marker)
+        self.annotation_controller.add_negative_marker(self.current_record, x_px, y_px, x_norm, y_norm)
         self._refresh_annotation_labels()
         self._save_current_record()
         self.status.showMessage("Added negative marker")
@@ -583,41 +392,23 @@ class MainWindow(QMainWindow):
         w_norm: float,
         h_norm: float,
     ) -> None:
-        if self.current_record is None:
-            return
-
-        meta_w = self.current_record.metadata.width if self.current_record.metadata is not None else None
-        meta_h = self.current_record.metadata.height if self.current_record.metadata is not None else None
-
-        resolved_x_px = int(round(x_px))
-        resolved_y_px = int(round(y_px))
-        resolved_w_px = int(round(w_px))
-        resolved_h_px = int(round(h_px))
-
-        if meta_w is not None and meta_h is not None and meta_w > 0 and meta_h > 0:
-            resolved_x_px = int(round(x_norm * meta_w))
-            resolved_y_px = int(round(y_norm * meta_h))
-            resolved_w_px = int(round(w_norm * meta_w))
-            resolved_h_px = int(round(h_norm * meta_h))
-
-        crop_roi = CropROI(
-            x_px=resolved_x_px,
-            y_px=resolved_y_px,
-            w_px=resolved_w_px,
-            h_px=resolved_h_px,
-            x_norm=round(x_norm, 6),
-            y_norm=round(y_norm, 6),
-            w_norm=round(w_norm, 6),
-            h_norm=round(h_norm, 6),
-            captured_at_utc=datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+        self.annotation_controller.set_roi(
+            self.current_record,
+            x_px,
+            y_px,
+            w_px,
+            h_px,
+            x_norm,
+            y_norm,
+            w_norm,
+            h_norm,
         )
-
-        set_crop_roi(self.current_record, crop_roi)
         self._refresh_annotation_labels()
         self._save_current_record()
         self.status.showMessage("Saved ROI rectangle")
 
     def _on_roi_invalid(self, message: str) -> None:
+        self.annotation_controller.show_roi_error(message)
         self.status.showMessage(message)
 
     def _on_metadata_changed(self) -> None:
@@ -708,8 +499,7 @@ class MainWindow(QMainWindow):
     def _save_current_record(self) -> None:
         if self.current_record is None:
             return
-
-        self.store.save(self.current_record)
+        self.video_manager.save_record(self.current_record)
 
     @staticmethod
     def _format_milliseconds(milliseconds: int) -> str:
