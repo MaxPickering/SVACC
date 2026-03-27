@@ -6,7 +6,7 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .models import AnnotationState, Marker, VideoMetadata, VideoRecord
+from .models import AnnotationState, CropROI, Marker, VideoMetadata, VideoRecord
 
 
 class JsonStore:
@@ -52,10 +52,43 @@ class JsonStore:
                 captured_at_utc=str(marker_data.get("captured_at_utc", "")),
             )
 
+        negative_markers: list[Marker] = []
+        negative_markers_data = annotations_data.get("negative_markers", [])
+        if isinstance(negative_markers_data, list):
+            for item in negative_markers_data:
+                if not isinstance(item, dict):
+                    continue
+                negative_markers.append(
+                    Marker(
+                        x_px=int(item.get("x_px", 0)),
+                        y_px=int(item.get("y_px", 0)),
+                        x_norm=float(item.get("x_norm", 0.0)),
+                        y_norm=float(item.get("y_norm", 0.0)),
+                        captured_at_utc=str(item.get("captured_at_utc", "")),
+                    )
+                )
+
+        crop_roi_data = annotations_data.get("crop_roi")
+        crop_roi = None
+        if isinstance(crop_roi_data, dict):
+            crop_roi = CropROI(
+                x_px=int(crop_roi_data.get("x_px", 0)),
+                y_px=int(crop_roi_data.get("y_px", 0)),
+                w_px=int(crop_roi_data.get("w_px", 0)),
+                h_px=int(crop_roi_data.get("h_px", 0)),
+                x_norm=float(crop_roi_data.get("x_norm", 0.0)),
+                y_norm=float(crop_roi_data.get("y_norm", 0.0)),
+                w_norm=float(crop_roi_data.get("w_norm", 0.0)),
+                h_norm=float(crop_roi_data.get("h_norm", 0.0)),
+                captured_at_utc=str(crop_roi_data.get("captured_at_utc", "")),
+            )
+
         annotations = AnnotationState(
             start_sec=_to_float_or_none(annotations_data.get("start_sec")),
             end_sec=_to_float_or_none(annotations_data.get("end_sec")),
             marker=marker,
+            negative_markers=negative_markers,
+            crop_roi=crop_roi,
             last_position_ms=int(annotations_data.get("last_position_ms", 0)),
         )
 
@@ -90,6 +123,16 @@ class JsonStore:
         record.updated_at_utc = _utc_now()
         sidecar = self._sidecar_path(record.metadata.relative_path)
         sidecar.write_text(json.dumps(asdict(record), indent=2), encoding="utf-8")
+
+    def delete_for_video(self, relative_video_path: str) -> bool:
+        sidecar = self._sidecar_path(relative_video_path)
+        if not sidecar.exists():
+            return False
+        try:
+            sidecar.unlink()
+            return True
+        except OSError:
+            return False
 
 
 def _utc_now() -> str:

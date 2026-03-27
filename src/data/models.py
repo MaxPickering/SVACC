@@ -14,10 +14,25 @@ class Marker:
 
 
 @dataclass
+class CropROI:
+    x_px: int
+    y_px: int
+    w_px: int
+    h_px: int
+    x_norm: float
+    y_norm: float
+    w_norm: float
+    h_norm: float
+    captured_at_utc: str
+
+
+@dataclass
 class AnnotationState:
     start_sec: Optional[float] = None
     end_sec: Optional[float] = None
     marker: Optional[Marker] = None
+    negative_markers: list[Marker] = field(default_factory=list)
+    crop_roi: Optional[CropROI] = None
     last_position_ms: int = 0
 
 

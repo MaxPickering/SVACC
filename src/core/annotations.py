@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from . import validation
-from src.data.models import Marker, VideoRecord
+from src.data.models import CropROI, Marker, VideoRecord
 
 
 def set_start(record: VideoRecord, current_time_sec: float) -> None:
@@ -14,6 +14,14 @@ def set_end(record: VideoRecord, current_time_sec: float) -> None:
 
 def set_marker(record: VideoRecord, marker: Marker) -> None:
     record.annotations.marker = marker
+
+
+def add_negative_marker(record: VideoRecord, marker: Marker) -> None:
+    record.annotations.negative_markers.append(marker)
+
+
+def set_crop_roi(record: VideoRecord, crop_roi: CropROI) -> None:
+    record.annotations.crop_roi = crop_roi
 
 
 def validate_start_end(record: VideoRecord) -> str | None:

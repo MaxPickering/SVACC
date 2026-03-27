@@ -1,4 +1,4 @@
-# Video Auto Segmenter
+# SVACC - Simple Video Annotator for Classes with Cropping
 
 Desktop Python application for loading MP4 videos, setting START and END points, and saving a single click marker coordinate.
 
@@ -7,7 +7,9 @@ Desktop Python application for loading MP4 videos, setting START and END points,
 - Video playback with play/pause and seek slider
 - Video list loaded from the `videos/` folder
 - START and END timestamp capture at current playback position
-- Left-click marker capture in video viewport
+- Left-click positive marker (single red marker)
+- Right-click negative marker (multiple blue markers)
+- ROI mode for rectangular area selection (draw with click-drag)
 - Per-video JSON sidecar output in `data/`
 - Metadata persistence (duration and available resolution/fps)
 
@@ -72,6 +74,15 @@ Each video creates one JSON file in `data/` with this structure:
       "y_norm": 0.333333,
       "captured_at_utc": "2026-03-27T10:00:10+00:00"
     },
+    "negative_markers": [
+      {
+        "x_px": 820,
+        "y_px": 410,
+        "x_norm": 0.427083,
+        "y_norm": 0.379630,
+        "captured_at_utc": "2026-03-27T10:00:12+00:00"
+      }
+    ],
     "last_position_ms": 10750
   }
 }
@@ -79,6 +90,9 @@ Each video creates one JSON file in `data/` with this structure:
 
 ## Notes
 
-- Marker is single-value: each new left click overwrites the previous marker.
+- Positive marker is single-value: each new left click overwrites the previous positive marker.
+- Negative markers are multi-value: each right click appends a new negative marker.
+- ROI is single-value: each new ROI drag overwrites the previous ROI rectangle.
+- Keyboard shortcuts: `Space` play/pause, `Left/Right` seek, `S` set START, `E` set END, `R` toggle ROI mode.
 - START/END validation warns when END is before START.
 - If JSON is malformed, the app falls back to default annotations for that video.
