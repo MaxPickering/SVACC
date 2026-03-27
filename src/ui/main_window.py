@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import QSignalBlocker, Qt, QUrl
-from PySide6.QtGui import QKeySequence, QShortcut
+from PySide6.QtGui import QKeySequence, QShortcut, QIcon
 from PySide6.QtMultimedia import QAudioOutput, QMediaMetaData, QMediaPlayer
 from PySide6.QtWidgets import (
     QHBoxLayout,
@@ -41,6 +41,7 @@ class MainWindow(QMainWindow):
 
         self.current_video: Path | None = None
         self.current_record = None
+        self._marker_undo_stack: list[str] = []
 
         self.player = QMediaPlayer(self)
         self.audio_output = QAudioOutput(self)
@@ -64,19 +65,33 @@ class MainWindow(QMainWindow):
         self.reset_selected_button.clicked.connect(self._reset_selected_video_data)
 
         self.play_pause_button = QPushButton("Play (Space)", self)
+        play_icon = QIcon("src/ui/icons/media-play.svg") 
+        self.play_pause_button.setIcon(play_icon)
         self.play_pause_button.clicked.connect(self._toggle_play_pause)
 
         self.mute_button = QPushButton("Unmute", self)
+        mute_icon = QIcon("src/ui/icons/volume-off-outline.svg")
+        self.mute_button.setIcon(mute_icon)
         self.mute_button.clicked.connect(self._toggle_mute)
 
+        plus_icon = QIcon("src/ui/icons/plus-outline.svg")
         self.start_button = QPushButton("Set START (S)", self)
+        self.start_button.setIcon(plus_icon)
         self.start_button.clicked.connect(self._set_start)
 
         self.end_button = QPushButton("Set END (E)", self)
+        self.end_button.setIcon(plus_icon)
         self.end_button.clicked.connect(self._set_end)
 
         self.roi_mode_button = QPushButton("ROI Mode: Off (R)", self)
+        roi_icon = QIcon("src/ui/icons/crop-outline.svg")
+        self.roi_mode_button.setIcon(roi_icon)
         self.roi_mode_button.clicked.connect(self._toggle_roi_mode)
+
+        self.help_button = QPushButton("Help", self)
+        help_icon = QIcon("src/ui/icons/question-mark-circle-outline.svg")
+        self.help_button.setIcon(help_icon)
+        self.help_button.clicked.connect(self._show_help)
 
         self.seek_slider = TimelineSlider(Qt.Orientation.Horizontal, self)
         self.seek_slider.setRange(0, 0)
@@ -121,10 +136,18 @@ class MainWindow(QMainWindow):
         controls = QHBoxLayout()
         controls.addWidget(self.play_pause_button)
         controls.addWidget(self.mute_button)
+
+        controls.addStretch(0)
+
         controls.addWidget(self.start_button)
         controls.addWidget(self.end_button)
         controls.addWidget(self.roi_mode_button)
-        controls.addStretch(1)
+
+        controls.addStretch(0)
+
+        controls.addSpacing(10)
+        controls.addWidget(self.help_button)
+        controls.addSpacing(10)
 
         right.addLayout(controls)
         right.addWidget(self.seek_slider)
@@ -153,6 +176,7 @@ class MainWindow(QMainWindow):
         self._register_shortcut(QKeySequence(Qt.Key.Key_S), self._set_start)
         self._register_shortcut(QKeySequence(Qt.Key.Key_E), self._set_end)
         self._register_shortcut(QKeySequence(Qt.Key.Key_R), self._toggle_roi_mode)
+        self._register_shortcut(QKeySequence.StandardKey.Undo, self._undo_marker)
 
     def _register_shortcut(self, sequence: QKeySequence, handler) -> None:  # type: ignore[no-untyped-def]
         shortcut = QShortcut(sequence, self)
@@ -173,10 +197,10 @@ class MainWindow(QMainWindow):
 
         deleted_count = self.video_manager.delete_all_annotations()
 
+        self.current_video = None
         self.current_record = None
-        self.video_widget.clear_marker()
-        self.video_widget.clear_negative_markers()
-        self.video_widget.clear_roi()
+        self._marker_undo_stack.clear()
+        self._refresh_annotation_labels()
         self.load_video_list()
         self.status.showMessage(f"Deleted {deleted_count} annotation file(s).")
 
@@ -203,6 +227,7 @@ class MainWindow(QMainWindow):
         deleted = self.video_manager.delete_video_annotations(metadata.relative_path)
 
         self.current_record = self.video_manager.load_or_create_record(self.current_video)
+        self._marker_undo_stack.clear()
         self._refresh_annotation_labels()
         self._refresh_video_list_item_status(self.current_video)
 
@@ -251,6 +276,9 @@ class MainWindow(QMainWindow):
         return file_name
 
     def _refresh_video_list_item_status(self, video_path: Path) -> None:
+        if self.current_record is None:
+            return
+
         is_complete = self.video_manager.record_is_complete(self.current_record)
         for index in range(self.video_list.count()):
             item = self.video_list.item(index)
@@ -272,6 +300,7 @@ class MainWindow(QMainWindow):
 
         self.current_video = video_path
         self.current_record = self.video_manager.load_or_create_record(video_path)
+        self._marker_undo_stack.clear()
 
         self.player.setSource(QUrl.fromLocalFile(str(video_path)))
         self.player.pause()
@@ -305,6 +334,22 @@ class MainWindow(QMainWindow):
             self.roi_mode_button.setText("ROI Mode: Off (R)")
             self.roi_mode_button.setStyleSheet("")
             self.status.showMessage("ROI mode disabled")
+
+    def _show_help(self) -> None:
+        QMessageBox.information(
+            self,
+            "Help",
+            "Keyboard Shortcuts:\n"
+            "Space - Play/Pause\n"
+            "M - Mute/Unmute\n"
+            "R - Toggle ROI Mode\n"
+            "Z - Undo Marker\n"
+            "Ctrl + Z - Undo Marker Placement\n\n"
+            "Info:\n"
+            "Positive markers are represented by a red dot. Negative markers are represented by blue dots.\n"
+            "ROI mode (Region Of Interest): When in ROI mode a green outline will be displayed around video preview. Click and drag to create a ROI selection.\n"
+            "Videos that have START, END, a negative class data will recieve a checkmark next to their names in the video manager."
+        )
 
     def _update_mute_button_text(self) -> None:
         if self.audio_output.isMuted():
@@ -367,8 +412,37 @@ class MainWindow(QMainWindow):
             self._refresh_video_list_item_status(self.current_video)
         self.status.showMessage(message)
 
+    def _undo_marker(self) -> None:
+        if self.current_record is None:
+            self.status.showMessage("No video loaded")
+            return
+
+        action: str | None = None
+        if self._marker_undo_stack:
+            action = self._marker_undo_stack.pop()
+        elif self.current_record.annotations.negative_markers:
+            action = "negative"
+        elif self.current_record.annotations.marker is not None:
+            action = "positive"
+
+        if action == "negative":
+            success, message = self.annotation_controller.undo_negative_marker(self.current_record)
+        else:
+            success, message = self.annotation_controller.undo_marker(self.current_record)
+
+        if not success:
+            self.status.showMessage(message)
+            return
+
+        self._refresh_annotation_labels()
+        self._save_current_record()
+        if self.current_video is not None:
+            self._refresh_video_list_item_status(self.current_video)
+        self.status.showMessage(message)
+
     def _on_marker_placed(self, x_px: float, y_px: float, x_norm: float, y_norm: float) -> None:
         self.annotation_controller.add_marker(self.current_record, x_px, y_px, x_norm, y_norm)
+        self._marker_undo_stack.append("positive")
         self._refresh_annotation_labels()
         self._save_current_record()
         if self.current_video is not None:
@@ -377,6 +451,7 @@ class MainWindow(QMainWindow):
 
     def _on_negative_marker_placed(self, x_px: float, y_px: float, x_norm: float, y_norm: float) -> None:
         self.annotation_controller.add_negative_marker(self.current_record, x_px, y_px, x_norm, y_norm)
+        self._marker_undo_stack.append("negative")
         self._refresh_annotation_labels()
         self._save_current_record()
         self.status.showMessage("Added negative marker")

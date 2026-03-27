@@ -93,6 +93,6 @@ Each video creates one JSON file in `data/` with this structure:
 - Positive marker is single-value: each new left click overwrites the previous positive marker.
 - Negative markers are multi-value: each right click appends a new negative marker.
 - ROI is single-value: each new ROI drag overwrites the previous ROI rectangle.
-- Keyboard shortcuts: `Space` play/pause, `Left/Right` seek, `S` set START, `E` set END, `R` toggle ROI mode.
+- Keyboard shortcuts: `Space` play/pause, `Left/Right` seek, `S` set START, `E` set END, `R` toggle ROI mode, `Ctrl+Z` undo last marker (positive or negative).
 - START/END validation warns when END is before START.
 - If JSON is malformed, the app falls back to default annotations for that video.

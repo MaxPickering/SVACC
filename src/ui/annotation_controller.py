@@ -4,6 +4,8 @@ from PySide6.QtWidgets import QMessageBox
 
 from src.core.annotations import (
     add_negative_marker,
+    clear_marker,
+    remove_last_negative_marker,
     set_crop_roi,
     set_end,
     set_marker,
@@ -80,6 +82,25 @@ class AnnotationController:
             captured_at_utc=datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         )
         add_negative_marker(current_record, marker)
+
+    def undo_marker(self, current_record: VideoRecord | None) -> tuple[bool, str]:
+        if current_record is None:
+            return False, "No video loaded"
+
+        if current_record.annotations.marker is None:
+            return False, "No marker to undo"
+
+        clear_marker(current_record)
+        return True, "Undid marker placement"
+
+    def undo_negative_marker(self, current_record: VideoRecord | None) -> tuple[bool, str]:
+        if current_record is None:
+            return False, "No video loaded"
+
+        if not remove_last_negative_marker(current_record):
+            return False, "No negative marker to undo"
+
+        return True, "Undid negative marker placement"
 
     def set_roi(
         self,

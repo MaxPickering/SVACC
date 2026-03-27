@@ -16,8 +16,19 @@ def set_marker(record: VideoRecord, marker: Marker) -> None:
     record.annotations.marker = marker
 
 
+def clear_marker(record: VideoRecord) -> None:
+    record.annotations.marker = None
+
+
 def add_negative_marker(record: VideoRecord, marker: Marker) -> None:
     record.annotations.negative_markers.append(marker)
+
+
+def remove_last_negative_marker(record: VideoRecord) -> bool:
+    if not record.annotations.negative_markers:
+        return False
+    record.annotations.negative_markers.pop()
+    return True
 
 
 def set_crop_roi(record: VideoRecord, crop_roi: CropROI) -> None:
