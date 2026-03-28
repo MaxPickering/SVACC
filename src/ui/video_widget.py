@@ -37,9 +37,13 @@ class VideoView(QGraphicsView):
     mouse_pressed = Signal(float, float, int)
     mouse_moved = Signal(float, float)
     mouse_released = Signal(float, float, int)
-    OUTER_RADIUS = 9.0
-    INNER_RADIUS = 5.5
-    CROSSHAIR_HALF = 13.0
+    OUTER_RADIUS = 8.0
+    INNER_RADIUS = 5.0
+    CROSSHAIR_HALF = 10.0
+
+    DEFAULT_BOX_WIDTH = 40
+    DEFAULT_BOX_HEIGHT = 20
+    BORDER_PEN_WIDTH = 2
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -48,6 +52,11 @@ class VideoView(QGraphicsView):
         self._roi_scene_rect: QRectF | None = None
         self._roi_preview_scene_rect: QRectF | None = None
         self._roi_mode_enabled = False
+        self._bounding_boxes_enabled = True
+        self._positive_box_width = self.DEFAULT_BOX_WIDTH
+        self._positive_box_height = self.DEFAULT_BOX_HEIGHT
+        self._negative_box_width = self.DEFAULT_BOX_WIDTH
+        self._negative_box_height = self.DEFAULT_BOX_HEIGHT
         self.setFrameShape(QGraphicsView.Shape.NoFrame)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -99,6 +108,20 @@ class VideoView(QGraphicsView):
         self._roi_mode_enabled = enabled
         self.viewport().update()
 
+    def set_bounding_boxes_enabled(self, enabled: bool) -> None:
+        self._bounding_boxes_enabled = enabled
+        self.viewport().update()
+
+    def set_positive_box_size(self, width: int, height: int) -> None:
+        self._positive_box_width = max(width, 1)
+        self._positive_box_height = max(height, 1)
+        self.viewport().update()
+
+    def set_negative_box_size(self, width: int, height: int) -> None:
+        self._negative_box_width = max(width, 1)
+        self._negative_box_height = max(height, 1)
+        self.viewport().update()
+
     def drawForeground(self, painter: QPainter, rect) -> None:  # type: ignore[no-untyped-def]
         super().drawForeground(painter, rect)
         painter.save()
@@ -112,26 +135,44 @@ class VideoView(QGraphicsView):
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawRect(viewport_rect.adjusted(0, 0, -1, -1))
 
+            if self._roi_scene_rect is not None:
+                self._draw_roi_rect(painter, self._roi_scene_rect, QColor(0, 220, 120, 230))
+
+            if self._roi_preview_scene_rect is not None:
+                self._draw_roi_rect(painter, self._roi_preview_scene_rect, QColor(255, 200, 0, 220))
+
         if self._marker_scene_pos is not None:
             self._draw_marker(painter, self._marker_scene_pos, QColor(220, 20, 60))
+            if self._bounding_boxes_enabled:
+                self._draw_bounding_box(
+                    painter,
+                    self._marker_scene_pos,
+                    QColor(255, 50, 50, 153),
+                    self._positive_box_width,
+                    self._positive_box_height,
+                )
 
         for negative_marker_pos in self._negative_marker_scene_positions:
-            self._draw_marker(painter, negative_marker_pos, QColor(50, 120, 255))
+            self._draw_marker(painter, negative_marker_pos, QColor(50, 220, 50))
+            if self._bounding_boxes_enabled:
+                self._draw_bounding_box(
+                    painter,
+                    negative_marker_pos,
+                    QColor(50, 255, 50, 153),
+                    self._negative_box_width,
+                    self._negative_box_height,
+                )
 
-        if self._roi_scene_rect is not None:
-            self._draw_roi_rect(painter, self._roi_scene_rect, QColor(0, 220, 120, 230), 2)
 
-        if self._roi_preview_scene_rect is not None:
-            self._draw_roi_rect(painter, self._roi_preview_scene_rect, QColor(255, 200, 0, 220), 2)
 
         painter.restore()
 
-    def _draw_roi_rect(self, painter: QPainter, scene_rect: QRectF, color: QColor, pen_width: int) -> None:
+    def _draw_roi_rect(self, painter: QPainter, scene_rect: QRectF, color: QColor) -> None:
         top_left = self.mapFromScene(scene_rect.topLeft())
         bottom_right = self.mapFromScene(scene_rect.bottomRight())
         view_rect = QRectF(QPointF(top_left), QPointF(bottom_right)).normalized()
 
-        painter.setPen(QPen(color, pen_width))
+        painter.setPen(QPen(color, self.BORDER_PEN_WIDTH))
         painter.setBrush(QColor(color.red(), color.green(), color.blue(), 40))
         painter.drawRect(view_rect)
 
@@ -155,6 +196,27 @@ class VideoView(QGraphicsView):
         painter.setBrush(fill_color)
         painter.drawEllipse(QPointF(x, y), self.INNER_RADIUS, self.INNER_RADIUS)
 
+    def _draw_bounding_box(
+        self,
+        painter: QPainter,
+        scene_pos: QPointF,
+        draw_color: QColor,
+        box_width: int,
+        box_height: int,
+    ) -> None:
+        view_point = self.mapFromScene(scene_pos)
+        x = float(view_point.x())
+        y = float(view_point.y())
+
+        rect = QRectF(x - box_width / 2, y - box_height / 2, box_width, box_height)
+
+        fill_color = draw_color
+        fill_color.setAlpha(40)
+        painter.fillRect(rect, fill_color)
+
+        painter.setPen(QPen(draw_color, self.BORDER_PEN_WIDTH))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRect(rect)
 
 class ClickableVideoWidget(QWidget):
     marker_placed = Signal(float, float, float, float)
@@ -339,6 +401,15 @@ class ClickableVideoWidget(QWidget):
     def clear_negative_markers(self) -> None:
         self._negative_marker_norms = []
         self._view.set_negative_marker_scene_positions([])
+
+    def set_bounding_boxes_enabled(self, enabled: bool) -> None:
+        self._view.set_bounding_boxes_enabled(enabled)
+
+    def set_positive_box_size(self, width: int, height: int) -> None:
+        self._view.set_positive_box_size(width, height)
+
+    def set_negative_box_size(self, width: int, height: int) -> None:
+        self._view.set_negative_box_size(width, height)
 
     def set_roi_mode_enabled(self, enabled: bool) -> None:
         self._roi_mode_enabled = enabled

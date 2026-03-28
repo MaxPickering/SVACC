@@ -2,20 +2,25 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QSignalBlocker, Qt, QUrl
-from PySide6.QtGui import QKeySequence, QShortcut, QIcon
+from PySide6.QtCore import QSettings, QSignalBlocker, Qt, QUrl
+from PySide6.QtGui import QIcon, QIntValidator, QKeySequence, QShortcut
 from PySide6.QtMultimedia import QAudioOutput, QMediaMetaData, QMediaPlayer
 from PySide6.QtWidgets import (
+    QCheckBox,
+    QFormLayout,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QMenu,
     QMainWindow,
     QMessageBox,
     QPushButton,
     QStatusBar,
     QVBoxLayout,
     QWidget,
+    QWidgetAction,
 )
 
 from src.data.json_store import JsonStore
@@ -27,10 +32,18 @@ from src.ui.video_widget import ClickableVideoWidget
 
 
 class MainWindow(QMainWindow):
+    SETTINGS_ORG = "SVACC"
+    SETTINGS_APP = "VideoAutoSegmenter"
+    DEFAULT_POS_BOX_WIDTH = 40
+    DEFAULT_POS_BOX_HEIGHT = 20
+    DEFAULT_NEG_BOX_WIDTH = 40
+    DEFAULT_NEG_BOX_HEIGHT = 20
+
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("SVACC - Simple Video Annotator for Classes with Cropping")
         self.resize(1280, 760)
+        self.app_settings = QSettings(self.SETTINGS_ORG, self.SETTINGS_APP)
 
         self.project_root = Path(__file__).resolve().parents[2]
         self.data_dir = self.project_root / "data"
@@ -93,6 +106,12 @@ class MainWindow(QMainWindow):
         self.help_button.setIcon(help_icon)
         self.help_button.clicked.connect(self._show_help)
 
+        self.settings_button = QPushButton("Settings", self)
+        self.settings_menu = QMenu(self.settings_button)
+        self.settings_button.setMenu(self.settings_menu)
+        self._build_settings_menu()
+        self._load_settings()
+
         self.seek_slider = TimelineSlider(Qt.Orientation.Horizontal, self)
         self.seek_slider.setRange(0, 0)
         self.seek_slider.sliderPressed.connect(self._on_slider_pressed)
@@ -146,6 +165,7 @@ class MainWindow(QMainWindow):
         controls.addStretch(0)
 
         controls.addSpacing(10)
+        controls.addWidget(self.settings_button)
         controls.addWidget(self.help_button)
         controls.addSpacing(10)
 
@@ -161,6 +181,106 @@ class MainWindow(QMainWindow):
         root.addLayout(right, stretch=4)
 
         self.setCentralWidget(container)
+
+    def _build_settings_menu(self) -> None:
+        menu_content = QWidget(self.settings_menu)
+        form_layout = QFormLayout(menu_content)
+        form_layout.setContentsMargins(10, 8, 10, 8)
+        form_layout.setHorizontalSpacing(10)
+        form_layout.setVerticalSpacing(6)
+
+        self.settings_enable_checkbox = QCheckBox("Enable bounding boxes", menu_content)
+        self.settings_pos_box_width = QLineEdit(menu_content)
+        self.settings_pos_box_height = QLineEdit(menu_content)
+        self.settings_neg_box_width = QLineEdit(menu_content)
+        self.settings_neg_box_height = QLineEdit(menu_content)
+
+        int_validator = QIntValidator(1, 999, menu_content)
+        self.settings_pos_box_width.setValidator(int_validator)
+        self.settings_pos_box_height.setValidator(int_validator)
+        self.settings_neg_box_width.setValidator(int_validator)
+        self.settings_neg_box_height.setValidator(int_validator)
+
+        self.settings_enable_checkbox.toggled.connect(self._on_settings_controls_changed)
+        self.settings_pos_box_width.editingFinished.connect(self._on_settings_controls_changed)
+        self.settings_pos_box_height.editingFinished.connect(self._on_settings_controls_changed)
+        self.settings_neg_box_width.editingFinished.connect(self._on_settings_controls_changed)
+        self.settings_neg_box_height.editingFinished.connect(self._on_settings_controls_changed)
+
+        form_layout.addRow(self.settings_enable_checkbox)
+        form_layout.addRow("Positive class box width", self.settings_pos_box_width)
+        form_layout.addRow("Positive class box height", self.settings_pos_box_height)
+        form_layout.addRow("Negative class box width", self.settings_neg_box_width)
+        form_layout.addRow("Negative class box height", self.settings_neg_box_height)
+
+        menu_action = QWidgetAction(self.settings_menu)
+        menu_action.setDefaultWidget(menu_content)
+        self.settings_menu.addAction(menu_action)
+
+    def _load_settings(self) -> None:
+        enabled = self.app_settings.value("bounding_boxes/enabled", True, type=bool)
+        pos_w = self._read_setting_int("bounding_boxes/positive_width", self.DEFAULT_POS_BOX_WIDTH)
+        pos_h = self._read_setting_int("bounding_boxes/positive_height", self.DEFAULT_POS_BOX_HEIGHT)
+        neg_w = self._read_setting_int("bounding_boxes/negative_width", self.DEFAULT_NEG_BOX_WIDTH)
+        neg_h = self._read_setting_int("bounding_boxes/negative_height", self.DEFAULT_NEG_BOX_HEIGHT)
+
+        self.settings_enable_checkbox.setChecked(enabled)
+        self.settings_pos_box_width.setText(str(pos_w))
+        self.settings_pos_box_height.setText(str(pos_h))
+        self.settings_neg_box_width.setText(str(neg_w))
+        self.settings_neg_box_height.setText(str(neg_h))
+        self._apply_bounding_box_settings(enabled, pos_w, pos_h, neg_w, neg_h)
+
+    def _read_setting_int(self, key: str, default: int) -> int:
+        value = self.app_settings.value(key, default)
+        try:
+            parsed = int(value)
+            return max(parsed, 1)
+        except (TypeError, ValueError):
+            return default
+
+    def _line_edit_int(self, line_edit: QLineEdit, default: int) -> int:
+        text = line_edit.text().strip()
+        if not text:
+            return default
+        try:
+            return max(int(text), 1)
+        except ValueError:
+            return default
+
+    def _on_settings_controls_changed(self) -> None:
+        enabled = self.settings_enable_checkbox.isChecked()
+        pos_w = self._line_edit_int(self.settings_pos_box_width, self.DEFAULT_POS_BOX_WIDTH)
+        pos_h = self._line_edit_int(self.settings_pos_box_height, self.DEFAULT_POS_BOX_HEIGHT)
+        neg_w = self._line_edit_int(self.settings_neg_box_width, self.DEFAULT_NEG_BOX_WIDTH)
+        neg_h = self._line_edit_int(self.settings_neg_box_height, self.DEFAULT_NEG_BOX_HEIGHT)
+
+        self.settings_pos_box_width.setText(str(pos_w))
+        self.settings_pos_box_height.setText(str(pos_h))
+        self.settings_neg_box_width.setText(str(neg_w))
+        self.settings_neg_box_height.setText(str(neg_h))
+
+        self._apply_bounding_box_settings(enabled, pos_w, pos_h, neg_w, neg_h)
+        self._save_settings(enabled, pos_w, pos_h, neg_w, neg_h)
+
+    def _apply_bounding_box_settings(
+        self,
+        enabled: bool,
+        pos_w: int,
+        pos_h: int,
+        neg_w: int,
+        neg_h: int,
+    ) -> None:
+        self.video_widget.set_bounding_boxes_enabled(enabled)
+        self.video_widget.set_positive_box_size(pos_w, pos_h)
+        self.video_widget.set_negative_box_size(neg_w, neg_h)
+
+    def _save_settings(self, enabled: bool, pos_w: int, pos_h: int, neg_w: int, neg_h: int) -> None:
+        self.app_settings.setValue("bounding_boxes/enabled", enabled)
+        self.app_settings.setValue("bounding_boxes/positive_width", pos_w)
+        self.app_settings.setValue("bounding_boxes/positive_height", pos_h)
+        self.app_settings.setValue("bounding_boxes/negative_width", neg_w)
+        self.app_settings.setValue("bounding_boxes/negative_height", neg_h)
 
     def _wire_player_events(self) -> None:
         self.player.positionChanged.connect(self._on_position_changed)
@@ -348,7 +468,8 @@ class MainWindow(QMainWindow):
             "Info:\n"
             "Positive markers are represented by a red dot. Negative markers are represented by blue dots.\n"
             "ROI mode (Region Of Interest): When in ROI mode a green outline will be displayed around video preview. Click and drag to create a ROI selection.\n"
-            "Videos that have START, END, a negative class data will recieve a checkmark next to their names in the video manager."
+            "Videos that have START, END, a negative class data will recieve a checkmark next to their names in the video manager.\n"
+            "In the Settings menu bounding boxes can be enabled/disabled and their size can be configured. The bounding box is a rectangle drawn around placed markers.\n"
         )
 
     def _update_mute_button_text(self) -> None:
