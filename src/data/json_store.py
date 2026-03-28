@@ -103,6 +103,10 @@ class JsonStore:
             start_sec=_to_float_or_none(annotations_data.get("start_sec")),
             end_sec=_to_float_or_none(annotations_data.get("end_sec")),
             marks_sec=marks_sec,
+            positive_box_width_px=_to_positive_int_or_none(annotations_data.get("positive_box_width_px")),
+            positive_box_height_px=_to_positive_int_or_none(annotations_data.get("positive_box_height_px")),
+            negative_box_width_px=_to_positive_int_or_none(annotations_data.get("negative_box_width_px")),
+            negative_box_height_px=_to_positive_int_or_none(annotations_data.get("negative_box_height_px")),
             marker=marker,
             negative_markers=negative_markers,
             crop_roi=crop_roi,
@@ -172,3 +176,10 @@ def _to_int_or_none(value: object) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _to_positive_int_or_none(value: object) -> int | None:
+    parsed = _to_int_or_none(value)
+    if parsed is None or parsed < 1:
+        return None
+    return parsed

@@ -34,10 +34,10 @@ from src.ui.video_widget import ClickableVideoWidget
 class MainWindow(QMainWindow):
     SETTINGS_ORG = "SVACC"
     SETTINGS_APP = "VideoAutoSegmenter"
-    DEFAULT_POS_BOX_WIDTH = 40
-    DEFAULT_POS_BOX_HEIGHT = 20
-    DEFAULT_NEG_BOX_WIDTH = 40
-    DEFAULT_NEG_BOX_HEIGHT = 20
+    DEFAULT_POS_BOX_WIDTH = ClickableVideoWidget.DEFAULT_BOX_WIDTH
+    DEFAULT_POS_BOX_HEIGHT = ClickableVideoWidget.DEFAULT_BOX_HEIGHT
+    DEFAULT_NEG_BOX_WIDTH = ClickableVideoWidget.DEFAULT_BOX_WIDTH
+    DEFAULT_NEG_BOX_HEIGHT = ClickableVideoWidget.DEFAULT_BOX_HEIGHT
 
     def __init__(self) -> None:
         super().__init__()
@@ -225,25 +225,10 @@ class MainWindow(QMainWindow):
 
     def _load_settings(self) -> None:
         enabled = self.app_settings.value("bounding_boxes/enabled", True, type=bool)
-        pos_w = self._read_setting_int("bounding_boxes/positive_width", self.DEFAULT_POS_BOX_WIDTH)
-        pos_h = self._read_setting_int("bounding_boxes/positive_height", self.DEFAULT_POS_BOX_HEIGHT)
-        neg_w = self._read_setting_int("bounding_boxes/negative_width", self.DEFAULT_NEG_BOX_WIDTH)
-        neg_h = self._read_setting_int("bounding_boxes/negative_height", self.DEFAULT_NEG_BOX_HEIGHT)
-
         self.settings_enable_checkbox.setChecked(enabled)
-        self.settings_pos_box_width.setText(str(pos_w))
-        self.settings_pos_box_height.setText(str(pos_h))
-        self.settings_neg_box_width.setText(str(neg_w))
-        self.settings_neg_box_height.setText(str(neg_h))
+        pos_w, pos_h, neg_w, neg_h = self._record_or_default_box_sizes()
+        self._set_box_size_controls(pos_w, pos_h, neg_w, neg_h)
         self._apply_bounding_box_settings(enabled, pos_w, pos_h, neg_w, neg_h)
-
-    def _read_setting_int(self, key: str, default: int) -> int:
-        value = self.app_settings.value(key, default)
-        try:
-            parsed = int(value)
-            return max(parsed, 1)
-        except (TypeError, ValueError):
-            return default
 
     def _line_edit_int(self, line_edit: QLineEdit, default: int) -> int:
         text = line_edit.text().strip()
@@ -261,13 +246,54 @@ class MainWindow(QMainWindow):
         neg_w = self._line_edit_int(self.settings_neg_box_width, self.DEFAULT_NEG_BOX_WIDTH)
         neg_h = self._line_edit_int(self.settings_neg_box_height, self.DEFAULT_NEG_BOX_HEIGHT)
 
-        self.settings_pos_box_width.setText(str(pos_w))
-        self.settings_pos_box_height.setText(str(pos_h))
-        self.settings_neg_box_width.setText(str(neg_w))
-        self.settings_neg_box_height.setText(str(neg_h))
+        self._set_box_size_controls(pos_w, pos_h, neg_w, neg_h)
 
         self._apply_bounding_box_settings(enabled, pos_w, pos_h, neg_w, neg_h)
-        self._save_settings(enabled, pos_w, pos_h, neg_w, neg_h)
+        self._persist_box_sizes_to_current_record(pos_w, pos_h, neg_w, neg_h)
+        self._save_settings(enabled)
+
+    def _record_or_default_box_sizes(self) -> tuple[int, int, int, int]:
+        if self.current_record is None:
+            return (
+                self.DEFAULT_POS_BOX_WIDTH,
+                self.DEFAULT_POS_BOX_HEIGHT,
+                self.DEFAULT_NEG_BOX_WIDTH,
+                self.DEFAULT_NEG_BOX_HEIGHT,
+            )
+
+        annotations = self.current_record.annotations
+        pos_w = annotations.positive_box_width_px or self.DEFAULT_POS_BOX_WIDTH
+        pos_h = annotations.positive_box_height_px or self.DEFAULT_POS_BOX_HEIGHT
+        neg_w = annotations.negative_box_width_px or self.DEFAULT_NEG_BOX_WIDTH
+        neg_h = annotations.negative_box_height_px or self.DEFAULT_NEG_BOX_HEIGHT
+        return (max(pos_w, 1), max(pos_h, 1), max(neg_w, 1), max(neg_h, 1))
+
+    def _set_box_size_controls(self, pos_w: int, pos_h: int, neg_w: int, neg_h: int) -> None:
+        with QSignalBlocker(self.settings_pos_box_width):
+            self.settings_pos_box_width.setText(str(pos_w))
+        with QSignalBlocker(self.settings_pos_box_height):
+            self.settings_pos_box_height.setText(str(pos_h))
+        with QSignalBlocker(self.settings_neg_box_width):
+            self.settings_neg_box_width.setText(str(neg_w))
+        with QSignalBlocker(self.settings_neg_box_height):
+            self.settings_neg_box_height.setText(str(neg_h))
+
+    def _sync_box_sizes_from_current_record(self) -> None:
+        pos_w, pos_h, neg_w, neg_h = self._record_or_default_box_sizes()
+        enabled = self.settings_enable_checkbox.isChecked()
+        self._set_box_size_controls(pos_w, pos_h, neg_w, neg_h)
+        self._apply_bounding_box_settings(enabled, pos_w, pos_h, neg_w, neg_h)
+
+    def _persist_box_sizes_to_current_record(self, pos_w: int, pos_h: int, neg_w: int, neg_h: int) -> None:
+        if self.current_record is None:
+            return
+
+        annotations = self.current_record.annotations
+        annotations.positive_box_width_px = pos_w
+        annotations.positive_box_height_px = pos_h
+        annotations.negative_box_width_px = neg_w
+        annotations.negative_box_height_px = neg_h
+        self._save_current_record()
 
     def _apply_bounding_box_settings(
         self,
@@ -281,12 +307,8 @@ class MainWindow(QMainWindow):
         self.video_widget.set_positive_box_size(pos_w, pos_h)
         self.video_widget.set_negative_box_size(neg_w, neg_h)
 
-    def _save_settings(self, enabled: bool, pos_w: int, pos_h: int, neg_w: int, neg_h: int) -> None:
+    def _save_settings(self, enabled: bool) -> None:
         self.app_settings.setValue("bounding_boxes/enabled", enabled)
-        self.app_settings.setValue("bounding_boxes/positive_width", pos_w)
-        self.app_settings.setValue("bounding_boxes/positive_height", pos_h)
-        self.app_settings.setValue("bounding_boxes/negative_width", neg_w)
-        self.app_settings.setValue("bounding_boxes/negative_height", neg_h)
         self.app_settings.sync()
 
     def _wire_player_events(self) -> None:
@@ -328,6 +350,7 @@ class MainWindow(QMainWindow):
         self.current_video = None
         self.current_record = None
         self._marker_undo_stack.clear()
+        self._sync_box_sizes_from_current_record()
         self._refresh_annotation_labels()
         self.load_video_list()
         self.status.showMessage(f"Deleted {deleted_count} annotation file(s).")
@@ -356,6 +379,7 @@ class MainWindow(QMainWindow):
 
         self.current_record = self.video_manager.load_or_create_record(self.current_video)
         self._marker_undo_stack.clear()
+        self._sync_box_sizes_from_current_record()
         self._refresh_annotation_labels()
         self._refresh_video_list_item_status(self.current_video)
 
@@ -429,6 +453,7 @@ class MainWindow(QMainWindow):
         self.current_video = video_path
         self.current_record = self.video_manager.load_or_create_record(video_path)
         self._marker_undo_stack.clear()
+        self._sync_box_sizes_from_current_record()
 
         self.player.setSource(QUrl.fromLocalFile(str(video_path)))
         self.player.pause()

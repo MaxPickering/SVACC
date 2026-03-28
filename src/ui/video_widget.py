@@ -41,8 +41,8 @@ class VideoView(QGraphicsView):
     INNER_RADIUS = 5.0
     CROSSHAIR_HALF = 10.0
 
-    DEFAULT_BOX_WIDTH = 40
-    DEFAULT_BOX_HEIGHT = 20
+    DEFAULT_BOX_WIDTH = 350
+    DEFAULT_BOX_HEIGHT = 275
     BORDER_PEN_WIDTH = 2
 
     def __init__(self, parent=None) -> None:
@@ -128,6 +128,9 @@ class VideoView(QGraphicsView):
         painter.resetTransform()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
 
+        if self._bounding_boxes_enabled:
+            self._draw_marker_placement_bounds(painter)
+
         # Draw green border when ROI mode is active
         if self._roi_mode_enabled:
             viewport_rect = self.viewport().rect()
@@ -166,6 +169,45 @@ class VideoView(QGraphicsView):
 
 
         painter.restore()
+
+    def _draw_marker_placement_bounds(self, painter: QPainter) -> None:
+        scene_rect = self.sceneRect()
+        if scene_rect.width() <= 0 or scene_rect.height() <= 0:
+            return
+
+        top_left = self.mapFromScene(scene_rect.topLeft())
+        bottom_right = self.mapFromScene(scene_rect.bottomRight())
+        view_rect = QRectF(QPointF(top_left), QPointF(bottom_right)).normalized()
+        if view_rect.width() <= 0 or view_rect.height() <= 0:
+            return
+
+        pos_rect = view_rect.adjusted(
+            self._positive_box_width / 2.0,
+            self._positive_box_height / 2.0,
+            -self._positive_box_width / 2.0,
+            -self._positive_box_height / 2.0,
+        )
+        if pos_rect.width() > 0 and pos_rect.height() > 0:
+            painter.setPen(QPen(QColor(170, 170, 170, 150), 1))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRect(pos_rect)
+
+        if (
+            self._negative_box_width != self._positive_box_width
+            or self._negative_box_height != self._positive_box_height
+        ):
+            neg_rect = view_rect.adjusted(
+                self._negative_box_width / 2.0,
+                self._negative_box_height / 2.0,
+                -self._negative_box_width / 2.0,
+                -self._negative_box_height / 2.0,
+            )
+            if neg_rect.width() > 0 and neg_rect.height() > 0:
+                dashed_pen = QPen(QColor(150, 150, 150, 120), 1)
+                dashed_pen.setStyle(Qt.PenStyle.DashLine)
+                painter.setPen(dashed_pen)
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                painter.drawRect(neg_rect)
 
     def _draw_roi_rect(self, painter: QPainter, scene_rect: QRectF, color: QColor) -> None:
         top_left = self.mapFromScene(scene_rect.topLeft())
@@ -225,11 +267,17 @@ class ClickableVideoWidget(QWidget):
     roi_invalid = Signal(str)
     MIN_ROI_WIDTH_PX = 8
     MIN_ROI_HEIGHT_PX = 8
+    DEFAULT_BOX_WIDTH = VideoView.DEFAULT_BOX_WIDTH
+    DEFAULT_BOX_HEIGHT = VideoView.DEFAULT_BOX_HEIGHT
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._video_width = 0
         self._video_height = 0
+        self._positive_box_width = self.DEFAULT_BOX_WIDTH
+        self._positive_box_height = self.DEFAULT_BOX_HEIGHT
+        self._negative_box_width = self.DEFAULT_BOX_WIDTH
+        self._negative_box_height = self.DEFAULT_BOX_HEIGHT
         self._marker_norm: tuple[float, float] | None = None
         self._negative_marker_norms: list[tuple[float, float]] = []
         self._roi_norm_rect: tuple[float, float, float, float] | None = None
@@ -284,7 +332,11 @@ class ClickableVideoWidget(QWidget):
         pos = QPointF(x, y)
 
         if button == int(Qt.MouseButton.RightButton.value):
-            placement = self._calculate_marker_placement(pos)
+            placement = self._calculate_marker_placement(
+                pos,
+                self._negative_box_width,
+                self._negative_box_height,
+            )
 
             # PATCH PLACEMENT HERE
 
@@ -312,7 +364,11 @@ class ClickableVideoWidget(QWidget):
             self._view.set_roi_preview_scene_rect(QRectF(clamped, clamped))
             return
 
-        placement = self._calculate_marker_placement(pos)
+        placement = self._calculate_marker_placement(
+            pos,
+            self._positive_box_width,
+            self._positive_box_height,
+        )
         if placement is None:
             return
 
@@ -409,9 +465,13 @@ class ClickableVideoWidget(QWidget):
         self._view.set_bounding_boxes_enabled(enabled)
 
     def set_positive_box_size(self, width: int, height: int) -> None:
+        self._positive_box_width = max(width, 1)
+        self._positive_box_height = max(height, 1)
         self._view.set_positive_box_size(width, height)
 
     def set_negative_box_size(self, width: int, height: int) -> None:
+        self._negative_box_width = max(width, 1)
+        self._negative_box_height = max(height, 1)
         self._view.set_negative_box_size(width, height)
 
     def set_roi_mode_enabled(self, enabled: bool) -> None:
@@ -440,12 +500,37 @@ class ClickableVideoWidget(QWidget):
             return None
         return self._video_rect
 
-    def _calculate_marker_placement(self, pos: QPointF) -> MarkerPlacement | None:
+    def _calculate_marker_placement(
+        self,
+        pos: QPointF,
+        box_width: int,
+        box_height: int,
+    ) -> MarkerPlacement | None:
         display_rect = self._display_rect()
         if display_rect is None:
             return None
 
         if not display_rect.contains(pos):
+            return None
+
+        top_left_view = self._view.mapFromScene(display_rect.topLeft())
+        bottom_right_view = self._view.mapFromScene(display_rect.bottomRight())
+        view_rect = QRectF(QPointF(top_left_view), QPointF(bottom_right_view)).normalized()
+
+        marker_view_point = self._view.mapFromScene(pos)
+        half_w = box_width / 2.0
+        half_h = box_height / 2.0
+        allowed_left = view_rect.left() + half_w
+        allowed_right = view_rect.right() - half_w
+        allowed_top = view_rect.top() + half_h
+        allowed_bottom = view_rect.bottom() - half_h
+
+        if (
+            marker_view_point.x() < allowed_left
+            or marker_view_point.x() > allowed_right
+            or marker_view_point.y() < allowed_top
+            or marker_view_point.y() > allowed_bottom
+        ):
             return None
 
         x_in_display = pos.x() - display_rect.left()
