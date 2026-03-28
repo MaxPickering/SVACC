@@ -136,10 +136,10 @@ class VideoView(QGraphicsView):
             painter.drawRect(viewport_rect.adjusted(0, 0, -1, -1))
 
             if self._roi_scene_rect is not None:
-                self._draw_roi_rect(painter, self._roi_scene_rect, QColor(0, 220, 120, 230))
+                self._draw_roi_rect(painter, self._roi_scene_rect, QColor(255, 165, 0, 230))
 
             if self._roi_preview_scene_rect is not None:
-                self._draw_roi_rect(painter, self._roi_preview_scene_rect, QColor(255, 200, 0, 220))
+                self._draw_roi_rect(painter, self._roi_preview_scene_rect, QColor(255, 220, 0, 220))
 
         if self._marker_scene_pos is not None:
             self._draw_marker(painter, self._marker_scene_pos, QColor(220, 20, 60))
@@ -285,6 +285,9 @@ class ClickableVideoWidget(QWidget):
 
         if button == int(Qt.MouseButton.RightButton.value):
             placement = self._calculate_marker_placement(pos)
+
+            # PATCH PLACEMENT HERE
+
             if placement is None:
                 return
 

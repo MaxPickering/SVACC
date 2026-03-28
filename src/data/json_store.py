@@ -49,6 +49,10 @@ class JsonStore:
                 y_px=int(marker_data.get("y_px", 0)),
                 x_norm=float(marker_data.get("x_norm", 0.0)),
                 y_norm=float(marker_data.get("y_norm", 0.0)),
+                box_w_px=_to_int_or_none(marker_data.get("box_w_px")),
+                box_h_px=_to_int_or_none(marker_data.get("box_h_px")),
+                box_w_norm=_to_float_or_none(marker_data.get("box_w_norm")),
+                box_h_norm=_to_float_or_none(marker_data.get("box_h_norm")),
                 captured_at_utc=str(marker_data.get("captured_at_utc", "")),
             )
 
@@ -64,6 +68,10 @@ class JsonStore:
                         y_px=int(item.get("y_px", 0)),
                         x_norm=float(item.get("x_norm", 0.0)),
                         y_norm=float(item.get("y_norm", 0.0)),
+                        box_w_px=_to_int_or_none(item.get("box_w_px")),
+                        box_h_px=_to_int_or_none(item.get("box_h_px")),
+                        box_w_norm=_to_float_or_none(item.get("box_w_norm")),
+                        box_h_norm=_to_float_or_none(item.get("box_h_norm")),
                         captured_at_utc=str(item.get("captured_at_utc", "")),
                     )
                 )

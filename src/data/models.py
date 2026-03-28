@@ -11,6 +11,10 @@ class Marker:
     x_norm: float
     y_norm: float
     captured_at_utc: str
+    box_w_px: Optional[int] = None
+    box_h_px: Optional[int] = None
+    box_w_norm: Optional[float] = None
+    box_h_norm: Optional[float] = None
 
 
 @dataclass

@@ -54,34 +54,69 @@ class AnnotationController:
         return True, "Saved END timestamp"
 
     def add_marker(
-        self, current_record: VideoRecord | None, x_px: float, y_px: float, x_norm: float, y_norm: float
+        self,
+        current_record: VideoRecord | None,
+        x_px: float,
+        y_px: float,
+        x_norm: float,
+        y_norm: float,
+        box_w_px: int | None = None,
+        box_h_px: int | None = None,
     ) -> None:
         if current_record is None:
             return
 
-        marker = Marker(
-            x_px=int(round(x_px)),
-            y_px=int(round(y_px)),
-            x_norm=round(x_norm, 6),
-            y_norm=round(y_norm, 6),
-            captured_at_utc=datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
-        )
+        marker = self._build_marker(current_record, x_px, y_px, x_norm, y_norm, box_w_px, box_h_px)
         set_marker(current_record, marker)
 
     def add_negative_marker(
-        self, current_record: VideoRecord | None, x_px: float, y_px: float, x_norm: float, y_norm: float
+        self,
+        current_record: VideoRecord | None,
+        x_px: float,
+        y_px: float,
+        x_norm: float,
+        y_norm: float,
+        box_w_px: int | None = None,
+        box_h_px: int | None = None,
     ) -> None:
         if current_record is None:
             return
 
-        marker = Marker(
+        marker = self._build_marker(current_record, x_px, y_px, x_norm, y_norm, box_w_px, box_h_px)
+        add_negative_marker(current_record, marker)
+
+    def _build_marker(
+        self,
+        current_record: VideoRecord,
+        x_px: float,
+        y_px: float,
+        x_norm: float,
+        y_norm: float,
+        box_w_px: int | None,
+        box_h_px: int | None,
+    ) -> Marker:
+        resolved_box_w = max(int(box_w_px), 1) if box_w_px is not None else None
+        resolved_box_h = max(int(box_h_px), 1) if box_h_px is not None else None
+
+        box_w_norm: float | None = None
+        box_h_norm: float | None = None
+        meta_w = current_record.metadata.width if current_record.metadata is not None else None
+        meta_h = current_record.metadata.height if current_record.metadata is not None else None
+        if resolved_box_w is not None and resolved_box_h is not None and meta_w and meta_h and meta_w > 0 and meta_h > 0:
+            box_w_norm = round(min(max(resolved_box_w / meta_w, 0.0), 1.0), 6)
+            box_h_norm = round(min(max(resolved_box_h / meta_h, 0.0), 1.0), 6)
+
+        return Marker(
             x_px=int(round(x_px)),
             y_px=int(round(y_px)),
             x_norm=round(x_norm, 6),
             y_norm=round(y_norm, 6),
+            box_w_px=resolved_box_w,
+            box_h_px=resolved_box_h,
+            box_w_norm=box_w_norm,
+            box_h_norm=box_h_norm,
             captured_at_utc=datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         )
-        add_negative_marker(current_record, marker)
 
     def undo_marker(self, current_record: VideoRecord | None) -> tuple[bool, str]:
         if current_record is None:

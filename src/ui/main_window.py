@@ -110,6 +110,7 @@ class MainWindow(QMainWindow):
         self.settings_menu = QMenu(self.settings_button)
         self.settings_button.setMenu(self.settings_menu)
         self._build_settings_menu()
+        self.settings_menu.aboutToHide.connect(self._on_settings_controls_changed)
         self._load_settings()
 
         self.seek_slider = TimelineSlider(Qt.Orientation.Horizontal, self)
@@ -281,6 +282,7 @@ class MainWindow(QMainWindow):
         self.app_settings.setValue("bounding_boxes/positive_height", pos_h)
         self.app_settings.setValue("bounding_boxes/negative_width", neg_w)
         self.app_settings.setValue("bounding_boxes/negative_height", neg_h)
+        self.app_settings.sync()
 
     def _wire_player_events(self) -> None:
         self.player.positionChanged.connect(self._on_position_changed)
@@ -562,7 +564,9 @@ class MainWindow(QMainWindow):
         self.status.showMessage(message)
 
     def _on_marker_placed(self, x_px: float, y_px: float, x_norm: float, y_norm: float) -> None:
-        self.annotation_controller.add_marker(self.current_record, x_px, y_px, x_norm, y_norm)
+        pos_w = self._line_edit_int(self.settings_pos_box_width, self.DEFAULT_POS_BOX_WIDTH)
+        pos_h = self._line_edit_int(self.settings_pos_box_height, self.DEFAULT_POS_BOX_HEIGHT)
+        self.annotation_controller.add_marker(self.current_record, x_px, y_px, x_norm, y_norm, pos_w, pos_h)
         self._marker_undo_stack.append("positive")
         self._refresh_annotation_labels()
         self._save_current_record()
@@ -571,7 +575,9 @@ class MainWindow(QMainWindow):
         self.status.showMessage("Saved marker coordinates")
 
     def _on_negative_marker_placed(self, x_px: float, y_px: float, x_norm: float, y_norm: float) -> None:
-        self.annotation_controller.add_negative_marker(self.current_record, x_px, y_px, x_norm, y_norm)
+        neg_w = self._line_edit_int(self.settings_neg_box_width, self.DEFAULT_NEG_BOX_WIDTH)
+        neg_h = self._line_edit_int(self.settings_neg_box_height, self.DEFAULT_NEG_BOX_HEIGHT)
+        self.annotation_controller.add_negative_marker(self.current_record, x_px, y_px, x_norm, y_norm, neg_w, neg_h)
         self._marker_undo_stack.append("negative")
         self._refresh_annotation_labels()
         self._save_current_record()
@@ -711,5 +717,6 @@ class MainWindow(QMainWindow):
         return f"{minutes:02d}:{seconds:06.3f}"
 
     def closeEvent(self, event) -> None:  # type: ignore[no-untyped-def]
+        self._on_settings_controls_changed()
         self._save_current_record()
         super().closeEvent(event)
