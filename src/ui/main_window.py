@@ -92,6 +92,10 @@ class MainWindow(QMainWindow):
         self.start_button.setIcon(plus_icon)
         self.start_button.clicked.connect(self._set_start)
 
+        self.mark_button = QPushButton("Set MARK (D)", self)
+        self.mark_button.setIcon(plus_icon)
+        self.mark_button.clicked.connect(self._add_mark)
+
         self.end_button = QPushButton("Set END (E)", self)
         self.end_button.setIcon(plus_icon)
         self.end_button.clicked.connect(self._set_end)
@@ -160,6 +164,7 @@ class MainWindow(QMainWindow):
         controls.addStretch(0)
 
         controls.addWidget(self.start_button)
+        controls.addWidget(self.mark_button)
         controls.addWidget(self.end_button)
         controls.addWidget(self.roi_mode_button)
 
@@ -296,6 +301,7 @@ class MainWindow(QMainWindow):
         self._register_shortcut(QKeySequence(Qt.Key.Key_Right), self.player_controller.seek_forward)
         self._register_shortcut(QKeySequence(Qt.Key.Key_Left), self.player_controller.seek_backward)
         self._register_shortcut(QKeySequence(Qt.Key.Key_S), self._set_start)
+        self._register_shortcut(QKeySequence(Qt.Key.Key_D), self._add_mark)
         self._register_shortcut(QKeySequence(Qt.Key.Key_E), self._set_end)
         self._register_shortcut(QKeySequence(Qt.Key.Key_R), self._toggle_roi_mode)
         self._register_shortcut(QKeySequence.StandardKey.Undo, self._undo_marker)
@@ -464,6 +470,7 @@ class MainWindow(QMainWindow):
             "Keyboard Shortcuts:\n"
             "Space - Play/Pause\n"
             "M - Mute/Unmute\n"
+            "D - Add MARK\n"
             "R - Toggle ROI Mode\n"
             "Z - Undo Marker\n"
             "Ctrl + Z - Undo Marker Placement\n\n"
@@ -529,6 +536,16 @@ class MainWindow(QMainWindow):
         success, message = self.annotation_controller.set_end(self.current_record, self.player.position())
         if not success:
             QMessageBox.warning(self, "Invalid END", message.replace(" not saved:", ""))
+        self._refresh_annotation_labels()
+        self._save_current_record()
+        if self.current_video is not None:
+            self._refresh_video_list_item_status(self.current_video)
+        self.status.showMessage(message)
+
+    def _add_mark(self) -> None:
+        success, message = self.annotation_controller.add_mark(self.current_record, self.player.position())
+        if not success:
+            QMessageBox.warning(self, "Invalid MARK", message)
         self._refresh_annotation_labels()
         self._save_current_record()
         if self.current_video is not None:
@@ -634,7 +651,7 @@ class MainWindow(QMainWindow):
             self.end_label.setText("END: -")
             self.marker_label.setText("Marker: -")
             self.roi_label.setText("ROI: -")
-            self.seek_slider.set_annotation_markers(None, None)
+            self.seek_slider.set_annotation_markers(None, None, [])
             self.video_widget.clear_marker()
             self.video_widget.clear_negative_markers()
             self.video_widget.clear_roi()
@@ -642,6 +659,7 @@ class MainWindow(QMainWindow):
 
         start = self.current_record.annotations.start_sec
         end = self.current_record.annotations.end_sec
+        marks = self.current_record.annotations.marks_sec
         marker = self.current_record.annotations.marker
         negative_markers = self.current_record.annotations.negative_markers
         crop_roi = self.current_record.annotations.crop_roi
@@ -651,14 +669,17 @@ class MainWindow(QMainWindow):
         self._refresh_timeline_markers()
 
         if marker is None:
-            self.marker_label.setText(f"Markers: positive=- negative={len(negative_markers)}")
+            self.marker_label.setText(
+                f"Markers: positive=- negative={len(negative_markers)} marks={len(marks)}"
+            )
             self.video_widget.clear_marker()
         else:
             self.marker_label.setText(
                 "Markers: "
                 f"px=({marker.x_px}, {marker.y_px}) "
                 f"norm=({marker.x_norm:.4f}, {marker.y_norm:.4f}) "
-                f"negative={len(negative_markers)}"
+                f"negative={len(negative_markers)} "
+                f"marks={len(marks)}"
             )
             self.video_widget.set_marker_norm(marker.x_norm, marker.y_norm)
 
@@ -685,12 +706,13 @@ class MainWindow(QMainWindow):
 
     def _refresh_timeline_markers(self) -> None:
         if self.current_record is None:
-            self.seek_slider.set_annotation_markers(None, None)
+            self.seek_slider.set_annotation_markers(None, None, [])
             return
 
         self.seek_slider.set_annotation_markers(
             self.current_record.annotations.start_sec,
             self.current_record.annotations.end_sec,
+            self.current_record.annotations.marks_sec,
         )
 
     def _update_time_label(self, position_ms: int, duration_ms: int) -> None:

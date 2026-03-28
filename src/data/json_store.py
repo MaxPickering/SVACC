@@ -91,9 +91,18 @@ class JsonStore:
                 captured_at_utc=str(crop_roi_data.get("captured_at_utc", "")),
             )
 
+        marks_sec: list[float] = []
+        marks_data = annotations_data.get("marks_sec", [])
+        if isinstance(marks_data, list):
+            for item in marks_data:
+                mark_value = _to_float_or_none(item)
+                if mark_value is not None:
+                    marks_sec.append(round(mark_value, 3))
+
         annotations = AnnotationState(
             start_sec=_to_float_or_none(annotations_data.get("start_sec")),
             end_sec=_to_float_or_none(annotations_data.get("end_sec")),
+            marks_sec=marks_sec,
             marker=marker,
             negative_markers=negative_markers,
             crop_roi=crop_roi,

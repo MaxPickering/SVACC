@@ -34,6 +34,7 @@ class CropROI:
 class AnnotationState:
     start_sec: Optional[float] = None
     end_sec: Optional[float] = None
+    marks_sec: list[float] = field(default_factory=list)
     marker: Optional[Marker] = None
     negative_markers: list[Marker] = field(default_factory=list)
     crop_roi: Optional[CropROI] = None

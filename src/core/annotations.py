@@ -12,6 +12,10 @@ def set_end(record: VideoRecord, current_time_sec: float) -> None:
     record.annotations.end_sec = round(current_time_sec, 3)
 
 
+def add_mark(record: VideoRecord, current_time_sec: float) -> None:
+    record.annotations.marks_sec.append(round(current_time_sec, 3))
+
+
 def set_marker(record: VideoRecord, marker: Marker) -> None:
     record.annotations.marker = marker
 

@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from PySide6.QtWidgets import QMessageBox
 
 from src.core.annotations import (
+    add_mark,
     add_negative_marker,
     clear_marker,
     remove_last_negative_marker,
@@ -52,6 +53,17 @@ class AnnotationController:
 
         set_end(current_record, proposed_end_sec)
         return True, "Saved END timestamp"
+
+    def add_mark(self, current_record: VideoRecord | None, position_ms: int) -> tuple[bool, str]:
+        """
+        Add mark timestamp. Returns (success, status_message).
+        """
+        if current_record is None:
+            return False, "No video loaded"
+
+        mark_sec = round(position_ms / 1000.0, 3)
+        add_mark(current_record, mark_sec)
+        return True, f"Saved MARK timestamp at {mark_sec:.3f}s"
 
     def add_marker(
         self,

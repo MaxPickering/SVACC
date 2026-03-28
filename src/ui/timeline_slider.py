@@ -6,15 +6,23 @@ from PySide6.QtWidgets import QSlider, QStyle, QStyleOptionSlider, QWidget
 class TimelineSlider(QSlider):
     START_COLOR = QColor(0, 190, 110)
     END_COLOR = QColor(255, 140, 0)
+    MARK_COLOR = QColor(50, 130, 240)
 
     def __init__(self, orientation: Qt.Orientation, parent: QWidget | None = None) -> None:
         super().__init__(orientation, parent)
         self._start_sec: float | None = None
         self._end_sec: float | None = None
+        self._marks_sec: list[float] = []
 
-    def set_annotation_markers(self, start_sec: float | None, end_sec: float | None) -> None:
+    def set_annotation_markers(
+        self,
+        start_sec: float | None,
+        end_sec: float | None,
+        marks_sec: list[float] | None = None,
+    ) -> None:
         self._start_sec = start_sec
         self._end_sec = end_sec
+        self._marks_sec = list(marks_sec or [])
         self.update()
 
     def paintEvent(self, event) -> None:  # type: ignore[no-untyped-def]
@@ -48,6 +56,8 @@ class TimelineSlider(QSlider):
 
         self._draw_marker(painter, x_for_seconds, self._start_sec, self.START_COLOR, "S", groove)
         self._draw_marker(painter, x_for_seconds, self._end_sec, self.END_COLOR, "E", groove)
+        for mark_sec in self._marks_sec:
+            self._draw_marker(painter, x_for_seconds, mark_sec, self.MARK_COLOR, "M", groove)
 
         painter.end()
 
